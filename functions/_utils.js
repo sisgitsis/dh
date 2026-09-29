@@ -1,5 +1,4 @@
-// _utils.js 【已移除 node:crypto import，兼容 Cloudflare Pages Functions】
-
+// _utils.js 【已移除 node:crypto import，Cloudflare Pages Functions专用】
 let d1Ready = false;
 
 async function d1ok(env) {
@@ -83,7 +82,7 @@ async function setTgCfg(env, cfg) {
     await storagePut(env, "tg_config", JSON.stringify(cfg));
 }
 
-// 【重要】使用 Workers 全局 Web Crypto，不导入任何 node:crypto
+// 使用 Workers 全局 Web Crypto，不导入node:crypto
 async function makeToken(pwd) {
     const encoder = new TextEncoder();
     const data = encoder.encode("nav_token_salt_v1:" + pwd);
@@ -132,6 +131,49 @@ async function tgVerify(env, role, code) {
     return String(code) === rec.code;
 }
 
+// R2图标批量缓存
+async function fetchFavicon(domain) {
+    const candidates = [
+        `https://www.google.com/s2/favicons?domain=${domain}&sz=64`,
+        `https://${domain}/favicon.ico`
+    ];
+    for (const url of candidates) {
+        try {
+            const res = await fetch(url, { signal: AbortSignal.timeout(4500) });
+            if (res.ok) {
+                const buf = await res.arrayBuffer();
+                return { ok: true, buf, contentType: res.headers.get("content‑type") || "image/x‑icon" };
+            }
+        } catch (e) { continue; }
+    }
+    return { ok: false };
+}
+
+async function batchCacheIcons(env, siteList) {
+    if (!env.NAV_ICON_BUCKET) return siteList;
+    const R2_PUBLIC_PREFIX = "https://r2ico.291129.xyz";
+    const out = [];
+    for (const s of siteList) {
+        if (s.icon && s.icon.startsWith(R2_PUBLIC_PREFIX)) {
+            out.push(s);
+            continue;
+        }
+        if (!s.icon) {
+            try {
+                const u = new URL(s.url);
+                const ret = await fetchFavicon(u.hostname);
+                if (ret.ok) {
+                    const key = `icons/${Date.now()}_${Math.random().toString(36).slice(2)}`;
+                    await env.NAV_ICON_BUCKET.put(key, ret.buf, { httpMetadata: { contentType: ret.contentType } });
+                    s.icon = `${R2_PUBLIC_PREFIX}/${key}`;
+                }
+            } catch (e) { /* 抓取图标失败跳过 */ }
+        }
+        out.push(s);
+    }
+    return out;
+}
+
 export {
     d1ok,
     storageGet,
@@ -146,5 +188,7 @@ export {
     isLoggedIn,
     jsonResp,
     tgSend,
-    tgVerify
+    tgVerify,
+    fetchFavicon,
+    batchCacheIcons
 };
