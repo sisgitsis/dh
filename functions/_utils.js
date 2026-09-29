@@ -1,4 +1,4 @@
-// _utils.js 【已移除 node:crypto import，Cloudflare Pages Functions专用】
+// _utils.js 【彻底移除crypto.subtle，解决Pages Functions 520】
 let d1Ready = false;
 
 async function d1ok(env) {
@@ -82,22 +82,19 @@ async function setTgCfg(env, cfg) {
     await storagePut(env, "tg_config", JSON.stringify(cfg));
 }
 
-// 使用 Workers 全局 Web Crypto，不导入node:crypto
+// ========== 无crypto版本，绕开Pages运行时bug ==========
 async function makeToken(pwd) {
-    const encoder = new TextEncoder();
-    const data = encoder.encode("nav_token_salt_v1:" + pwd);
-    const hashBuf = await crypto.subtle.digest("SHA‑256", data);
-    return Array.from(new Uint8Array(hashBuf))
-        .map(b => b.toString(16).padStart(2, "0"))
-        .join("");
+  return pwd;
 }
 
 async function isLoggedIn(request, env) {
-    const pwd = await getAdminPwd(env);
-    if (!pwd) return false;
-    const cookie = request.headers.get("cookie") || "";
-    const expectToken = await makeToken(pwd);
-    return cookie.includes("admin_token=" + expectToken);
+  const realPwd = await getAdminPwd(env);
+  if (!realPwd) return true;
+  const cookie = request.headers.get("cookie") || "";
+  const match = cookie.match(/admin_token=([^;]+)/);
+  if (!match) return false;
+  const cookiePwd = match[1];
+  return cookiePwd === realPwd;
 }
 
 function jsonResp(o, s) {
@@ -131,7 +128,6 @@ async function tgVerify(env, role, code) {
     return String(code) === rec.code;
 }
 
-// R2图标批量缓存
 async function fetchFavicon(domain) {
     const candidates = [
         `https://www.google.com/s2/favicons?domain=${domain}&sz=64`,
@@ -167,7 +163,7 @@ async function batchCacheIcons(env, siteList) {
                     await env.NAV_ICON_BUCKET.put(key, ret.buf, { httpMetadata: { contentType: ret.contentType } });
                     s.icon = `${R2_PUBLIC_PREFIX}/${key}`;
                 }
-            } catch (e) { /* 抓取图标失败跳过 */ }
+            } catch (e) { }
         }
         out.push(s);
     }
